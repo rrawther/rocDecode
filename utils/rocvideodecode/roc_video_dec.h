@@ -387,7 +387,7 @@ class RocVideoDecoder {
          */
         bool CodecSupported(int device_id, rocDecVideoCodec codec_id, uint32_t bit_depth);
 
-    private:
+    protected:
         /**
          *   @brief  Callback function to be registered for getting a callback when decoding of sequence starts
          */
