@@ -32,7 +32,8 @@ extern "C" {
 #include "rocvideodecode/roc_video_dec.h"       // for derived class
 
 typedef struct DecFrameBufferFFMpeg_ {
-    AVFrame *frame_ptr;       /**< device memory pointer for the decoded frame */
+    AVFrame *av_frame_ptr;      /**< device memory pointer for the decoded frame */
+    uint8_t *frame_ptr;       /**< device memory pointer for the decoded frame */
     int64_t  pts;             /**<  timestamp for the decoded frame */
     int picture_index;         /**<  surface index for the decoded frame */
 } DecFrameBufferFFMpeg;
@@ -75,7 +76,6 @@ class FFMpegVideoDecoder: public RocVideoDecoder {
          */
         int DecodeFrame(const uint8_t *data, size_t size, int pkt_flags, int64_t pts = 0, int *num_decoded_pics = nullptr);
 
-    protected:
     private:
         AVCodecContext * dec_context_ = nullptr;
         AVFrame *avframe_ = nullptr;
@@ -85,6 +85,6 @@ class FFMpegVideoDecoder: public RocVideoDecoder {
         AVFormatContext * formatContext = nullptr;
         AVInputFormat * inputFormat = nullptr;
         AVStream *video = nullptr;
-        std::vector<AVFrame *> out_av_frames_;
+        std::vector<AVFrame *> av_frames_;
 
 };

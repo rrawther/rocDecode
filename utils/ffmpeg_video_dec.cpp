@@ -161,12 +161,33 @@ int FFMpegVideoDecoder::DecodeFrame(const uint8_t *data, size_t size, int pkt_fl
         printf("saving frame %3d\n", dec_context_->frame_number);
         fflush(stdout);
         decoded_pic_cnt_++;
+        if (out_mem_type_ != OUT_SURFACE_MEM_NOT_MAPPED) {
+            if (out_mem_type_ == OUT_SURFACE_MEM_DEV_INTERNAL) {
+                std::cerr << "Memtype not supported for this decoder" << std::endl;
+                break;
+            }
+            // add frame to the frame_q
+            // copy the decoded surface info device or host
+            uint8_t *p_dec_frame = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(mtx_vp_frame_);
+                // if not enough frames in stock, allocate
+                if ((unsigned)++output_frame_cnt_ > av_frames_.size()) {
+                    num_alloced_frames_++;
+                    DecFrameBufferFFMpeg dec_frame = { 0 };
+                    if (out_mem_type_ == OUT_SURFACE_MEM_DEV_COPIED) {
+                        // allocate device memory
+                        HIP_API_CALL(hipMalloc((void **)&dec_frame.frame_ptr, GetFrameSize()));
+                    } else {
+                        dec_frame.frame_ptr = new uint8_t[GetFrameSize()];
+                    }
+                    dec_frame.pts = pDispInfo->pts;
+                    dec_frame.picture_index = pDispInfo->picture_index;
+                    vp_frames_.push_back(dec_frame);
+                }
+                p_dec_frame = vp_frames_[output_frame_cnt_ - 1].frame_ptr;
+            }
 
-        /* the picture is allocated by the decoder. no need to
-           free it */
-        snprintf(buf, sizeof(buf), "%s-%d", filename, dec_ctx->frame_number);
-        //pgm_save(frame->data[0], frame->linesize[0],
-        //         frame->width, frame->height, buf);
     }
     if (num_decoded_pics) {
         *num_decoded_pics = decoded_pic_cnt_;
