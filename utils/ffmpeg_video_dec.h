@@ -32,8 +32,8 @@ extern "C" {
 #include "rocvideodecode/roc_video_dec.h"       // for derived class
 
 typedef struct DecFrameBufferFFMpeg_ {
-    AVFrame *av_frame_ptr;      /**< device memory pointer for the decoded frame */
-    uint8_t *frame_ptr;       /**< device memory pointer for the decoded frame */
+    AVFrame *av_frame_ptr;      /**< av_frame pointer for the decoded frame */
+    uint8_t *frame_ptr;       /**< host/device memory pointer for the decoded frame depending on mem_type*/
     int64_t  pts;             /**<  timestamp for the decoded frame */
     int picture_index;         /**<  surface index for the decoded frame */
 } DecFrameBufferFFMpeg;
@@ -76,15 +76,79 @@ class FFMpegVideoDecoder: public RocVideoDecoder {
          */
         int DecodeFrame(const uint8_t *data, size_t size, int pkt_flags, int64_t pts = 0, int *num_decoded_pics = nullptr);
 
+protected:
+        /**
+         *   @brief  This function gets called when a sequence is ready to be decoded. The function also gets called
+             when there is format change
+        */
+        int HandleVideoSequence(RocdecVideoFormat *p_video_format);
+
+        /**
+         *   @brief  This function gets called when a picture is ready to be decoded. cuvidDecodePicture is called from this function
+         *   to decode the picture
+         */
+        int HandlePictureDecode(RocdecPicParams *p_pic_params);
+
+        /**
+         *   @brief  This function gets called after a picture is decoded and available for display. Frames are fetched and stored in 
+             internal buffer
+        */
+        int HandlePictureDisplay(RocdecParserDispInfo *p_disp_info);
+        /**
+         *   @brief  This function gets called when all unregistered user SEI messages are parsed for a frame
+         */
+        int GetSEIMessage(RocdecSeiMessageInfo *p_sei_message_info);
+
+        /**
+         *   @brief  This function reconfigure decoder if there is a change in sequence params.
+         */
+        int ReconfigureDecoder(RocdecVideoFormat *p_video_format);
+
     private:
+        void PushPacket(AVPacket *pkt){
+            std::unique_lock<std::mutex> lock(mtx_pkt_q_);
+            av_packet_q_.push(pkt);
+            cv_pkt_.notify_one();
+        }
+        
+        AVPacket *PopPacket(){
+            std::unique_lock<std::mutex> lock(mtx_pkt_q_);
+            cv_pkt_.wait(lock, [&] { return !av_packet_q_.empty(); });
+            AVPacket *pkt = av_packet_q_.front();
+            av_packet_q_.pop();
+            return pkt;
+        }
+
+        void PushFrame(AVFrame *av_frame){
+            std::unique_lock<std::mutex> lock(mtx_frame_q_);
+            av_frame_q_.push(av_frame);
+            cv_frame_.notify_one();
+        };
+
+        AVFrame *PopFrame(){
+            std::unique_lock<std::mutex> lock(mtx_frame_q_);
+            cv_pkt_.wait(lock, [&] { return !av_frame_q_.empty(); });
+            AVFrame *p_frame = av_frame_q_.front();
+            av_frame_q_.pop();
+            return av_frame_q_;
+        }
+
+        typedef enum { CMD_ABORT, CMD_DECODE } CommandType;
+        typedef enum { STATUS_SUCCESS = 0, STATUS_FAILURE = -1 } StatusType;
+        std::thread *ffmpeg_decoder_thread_ = nullptr;
+        std::queue<AVPacket *> av_packet_q_;        // queue for compressed packets
+        std::queue<AVFrame *> av_frame_q_;
+        std::mutex mtx_pkt_q_, mtx_frame_q_;               //for command and status
+        std::condition_variable cv_pkt_, cv_frame_;     //for command and status
+        std::atomic<bool> end_of_stream_ = false;
+        // Variables for FFMpeg decoding
         AVCodecContext * dec_context_ = nullptr;
+        AVPixelFormat decoder_pixel_format_;
         AVFrame *avframe_ = nullptr;
         AVPacket *av_pkt_ = nullptr;
-
         AVCodec *decoder_ = nullptr;
         AVFormatContext * formatContext = nullptr;
         AVInputFormat * inputFormat = nullptr;
         AVStream *video = nullptr;
-        std::vector<AVFrame *> av_frames_;
-
+        int64_t last_packet_pts_ = 0;
 };
